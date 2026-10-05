@@ -24,22 +24,40 @@ Python 3.12 is recommended. This project was developed with Python 3.12.10.
 Clone the repository:
 
 ```bash
-git clone https://github.com/brinstussymethod/Pepspace-Visualization.git
+git clone https://github.com/alexghyet/Pepspace-Visualization
 cd Pepspace-Visualization
 ```
 
-Create a virtual environment:
+On Windows, install Python 3.12 first if it is not already installed. Download it from [python.org](https://www.python.org/downloads/) and enable the Python launcher during installation. Open a new terminal afterward and confirm that `py --version` reports Python 3.12. If `python` opens the Microsoft Store or reports that Python was not found, the interpreter is not installed or available on `PATH`; installing a virtual environment cannot replace installing Python.
+
+On Windows ARM devices, use the x64 build of Python 3.12 for this project. Some pinned scientific packages may not have ARM64 wheels, which can make pip try to compile them locally.
+
+Create a virtual environment.
+
+Windows (PowerShell or Command Prompt):
 
 ```bash
-python -m venv .venv
+py -3.12 -m venv .venv
+```
+
+Mac/Linux:
+
+```bash
+python3 -m venv .venv
 ```
 
 Activate the environment.
 
-Windows:
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+Windows Command Prompt:
 
 ```bash
-.venv\Scripts\activate
+.venv\Scripts\activate.bat
 ```
 
 Mac/Linux:
@@ -51,7 +69,7 @@ source .venv/bin/activate
 Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 ## Running the Application
@@ -59,13 +77,13 @@ pip install -r requirements.txt
 Start the main Streamlit app:
 
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 To run the advanced prototype:
 
 ```bash
-streamlit run app_test.py
+python -m streamlit run app_test.py
 ```
 
 After launching, Streamlit will print a local URL and usually open the application in your browser automatically.
@@ -168,6 +186,7 @@ The metadata row count should match the number of embedding rows. If the counts 
 
 ## Author
 
-Alejandro Lopez and Brian Andrade<br>
+Alejandro Lopez <br>
+Faulty Advisor: Jesus Armando Beltran Verdugo<br>
 Department of Computer Science<br>
 California State University - Los Angeles
