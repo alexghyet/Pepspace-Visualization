@@ -1,36 +1,47 @@
+"""Display coordinates for a globe; these never modify the source embeddings."""
+
 import numpy as np
 
 
+def centered_3d_coordinates(X):
+    """Center 3D input, or use deterministic PCA to display higher dimensions.
+
+    PCA from >3 dimensions is a lossy display projection. Centering 3D input
+    preserves every pairwise distance and avoids an origin-dependent sphere cap.
+    """
+    coordinates = np.asarray(X, dtype=np.float64)
+    if coordinates.ndim != 2 or coordinates.shape[1] < 3:
+        raise ValueError("Expected an array with at least three dimensions.")
+    if len(coordinates) < 3 or not np.isfinite(coordinates).all():
+        raise ValueError("Expected at least three finite coordinate rows.")
+    if coordinates.shape[1] > 3:
+        from sklearn.decomposition import PCA
+
+        return PCA(n_components=3, svd_solver="full").fit_transform(coordinates)
+    return coordinates - coordinates.mean(axis=0, keepdims=True)
+
+
+def fit_embeddings_in_sphere(X, radius=0.9):
+    """Fit inside a globe with ONE scale factor, preserving 3D geometry.
+
+    This preserves all relative 3D distances, angles, and nearest neighbors.
+    It does not claim to preserve all distances in the original embedding space.
+    """
+    if not 0 < radius <= 1:
+        raise ValueError("The radius must be in (0, 1].")
+    coordinates = centered_3d_coordinates(X)
+    extent = np.linalg.norm(coordinates, axis=1).max()
+    return coordinates * (radius / extent) if extent > 0 else coordinates
+
+
 def project_embeddings_to_sphere(X):
+    """Center and radially project onto a unit sphere surface.
+
+    Radial projection changes distances and may change neighborhoods. A point
+    exactly at the centroid has no direction and remains at the origin.
     """
-    Normalize N-dimensional UMAP embeddings onto a unit hypersphere,
-    then stereographically project down to 3D for visualization.
-
-    Works for any input dimension 3-8.
-
-    Parameters
-    ----------
-    X : np.ndarray
-        Shape (n_samples, n_components) — output from UMAP
-
-    Returns
-    -------
-    np.ndarray
-        Shape (n_samples, 3) — points projected onto a 3D unit sphere
-    """
-
-    # Step 1: Normalize to unit length in native N dimensions
-    X_norm = X / np.linalg.norm(X, axis=1, keepdims=True)
-
-    # Step 2: If already 3D, return as is
-    if X_norm.shape[1] == 3:
-        return X_norm
-
-    # Step 3: Iteratively project from ND down to 3D via stereographic projection
-    while X_norm.shape[1] > 3:
-        w = X_norm[:, -1]  # take last dimension as projection pole
-        X_norm = X_norm[:, :-1] / (1 - w[:, np.newaxis])
-        # Re-normalize after each step to stay on the sphere
-        X_norm = X_norm / np.linalg.norm(X_norm, axis=1, keepdims=True)
-
-    return X_norm
+    coordinates = centered_3d_coordinates(X)
+    norms = np.linalg.norm(coordinates, axis=1, keepdims=True)
+    return np.divide(
+        coordinates, norms, out=np.zeros_like(coordinates), where=norms > 0
+    )

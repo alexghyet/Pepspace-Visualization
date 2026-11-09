@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Peptide ScatterGL globe</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text, #31333f); background: var(--background, #ffffff); font: 14px system-ui, sans-serif; }
+    .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; padding: 8px 4px; }
+    button, select { background: var(--background, #ffffff); color: inherit; border: 1px solid var(--border, #94a3b8); border-radius: 6px; padding: 7px 10px; font: inherit; cursor: pointer; }
+    button:hover, select:hover { border-color: #3b82f6; }
+    button[aria-pressed="true"] { background: #2563eb; border-color: #2563eb; color: #ffffff; }
+    button:focus-visible, select:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+    button:disabled { cursor: default; opacity: .5; }
+    .hint { padding: 2px 4px 6px; opacity: .75; font-size: 12px; }
+    #globe { position: relative; width: 100%; height: 600px; overflow: hidden; touch-action: none; }
+    #axes-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+    .axis-label { position: absolute; padding: 2px 5px; font-size: 12px; color: var(--text, #31333f); background: var(--panel, #f1f5f9); border-radius: 3px; white-space: nowrap; }
+    #hover-label { position: absolute; z-index: 3; pointer-events: none; max-width: 280px; padding: 7px 9px; border: 1px solid var(--border, #94a3b8); border-radius: 5px; color: var(--text, #31333f); background: var(--panel, #f1f5f9); font-size: 13px; overflow-wrap: anywhere; box-shadow: 0 2px 6px #0002; }
+    [hidden] { display: none !important; }
+    #details { min-height: 42px; margin: 0; padding: 8px 4px; overflow-wrap: anywhere; }
+    #selection-count { margin-left: auto; font-size: 12px; }
+    #error { padding: 12px 4px; color: #dc2626; }
+    @media (max-width: 560px) { #selection-count { width: 100%; margin: 0; } }
+  </style>
+  <script src="vendor/three.min.js"></script>
+  <script src="vendor/scatter-gl.min.js"></script>
+  <script src="globe_geometry.js"></script>
+</head>
+<body>
+  <div class="toolbar" role="group" aria-label="ScatterGL controls">
+    <button id="rotate" type="button" aria-pressed="true">Rotate / Pan</button>
+    <button id="select" type="button" aria-pressed="false">Select region</button>
+    <select id="display" aria-label="Render points or labels">
+      <option value="points">Points</option>
+      <option value="labels">Labels</option>
+    </select>
+    <button id="spin" type="button" aria-pressed="false">Spin globe</button>
+    <select id="view" aria-label="Camera view">
+      <option value="front">Front (XY)</option>
+      <option value="side">Side (YZ)</option>
+      <option value="top">Top (XZ)</option>
+      <option value="custom" disabled>Custom view</option>
+    </select>
+    <button id="reset" type="button">Reset view</button>
+    <button id="clear" type="button" disabled>Clear selection</button>
+    <span id="selection-count" aria-live="polite"></span>
+  </div>
+  <div id="instructions" class="hint">Drag to rotate · Right-drag to pan · Scroll to zoom · Click a peptide or select a region</div>
+  <div id="axis-description" class="hint"></div>
+  <div id="globe" role="img" aria-label="Interactive three dimensional peptide globe">
+    <div id="axes-overlay" aria-hidden="true">
+      <span class="axis-label" id="axis-x">X</span>
+      <span class="axis-label" id="axis-y">Y</span>
+      <span class="axis-label" id="axis-z">Z</span>
+    </div>
+    <div id="hover-label" role="tooltip" hidden></div>
+  </div>
+  <p id="details" aria-live="polite">Hover over a peptide to see its ID, sequence, and class.</p>
+  <div id="error" role="alert" hidden></div>
+  <script src="globe.js"></script>
+</body>
+</html>

@@ -5,10 +5,18 @@ from sklearn.manifold import trustworthiness
 import json
 import os
 from datetime import datetime
+from pathlib import Path
+import sys
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from utils.dataset import validate_embeddings
+from utils.projection_settings import DEFAULT_METRIC, DEFAULT_SEED
 
 # Paths
-EMB_PATH = "embeddings/veltri/veltri_embeddings.npy"
-RESULTS_DIR = "optuna_results"
+EMB_PATH = PROJECT_ROOT / "embeddings/veltri/veltri_embeddings.npy"
+RESULTS_DIR = PROJECT_ROOT / "optuna_results"
 
 # Dimension to optimize — change this before each run
 N_COMPONENTS = 3
@@ -18,7 +26,7 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 # Load embeddings 
 print("Loading embeddings...")
-X = np.load(EMB_PATH).astype("float32")
+X = validate_embeddings(np.load(EMB_PATH, allow_pickle=False))
 print("Embedding shape:", X.shape)
 
 
@@ -29,16 +37,19 @@ def objective(trial):
     method = trial.suggest_categorical("method", ["UMAP", "densMAP"])
 
     # Shared parameters
-    n_neighbors = trial.suggest_int("n_neighbors", 5, 50)
+    max_neighbors = min(50, len(X) - 1)
+    n_neighbors = trial.suggest_int("n_neighbors", min(5, max_neighbors), max_neighbors)
     min_dist    = trial.suggest_float("min_dist", 0.0, 0.5)
 
     reducer_kwargs = dict(
         n_neighbors=n_neighbors,
         min_dist=min_dist,
         n_components=N_COMPONENTS,
-        metric="cosine",
-        random_state=42,
+        metric=DEFAULT_METRIC,
+        random_state=DEFAULT_SEED,
     )
+    if len(X) <= N_COMPONENTS + 1:
+        reducer_kwargs["init"] = "random"
 
     # densMAP-only parameter
     if method == "densMAP":
@@ -50,7 +61,8 @@ def objective(trial):
 
     reducer = umap.UMAP(**reducer_kwargs)
     X_low   = reducer.fit_transform(X)
-    score   = trustworthiness(X, X_low)
+    quality_neighbors = min(5, (len(X) - 1) // 2)
+    score   = trustworthiness(X, X_low, n_neighbors=quality_neighbors)
 
     return score
 
@@ -61,7 +73,7 @@ def progress_callback(study, trial):
 # Run optimizer
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 print(f"\nStarting Optuna optimization for {N_COMPONENTS}D...")
-study = optuna.create_study(direction="maximize")
+study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=DEFAULT_SEED))
 study.optimize(objective, n_trials=75, callbacks=[progress_callback])
 
 print("\nBest parameters:")

@@ -1,0 +1,23 @@
+# Per-browser appearance selection: app menu -> Settings -> Theme.
+# Leave theme.base unset so the user's Light/Dark/System choice takes priority.
+[theme.light]
+primaryColor = "#2563eb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#172033"
+borderColor = "#cbd5e1"
+
+[theme.light.sidebar]
+backgroundColor = "#f1f5f9"
+secondaryBackgroundColor = "#ffffff"
+
+[theme.dark]
+primaryColor = "#60a5fa"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1e293b"
+textColor = "#f1f5f9"
+borderColor = "#475569"
+
+[theme.dark.sidebar]
+backgroundColor = "#172033"
+secondaryBackgroundColor = "#1e293b"

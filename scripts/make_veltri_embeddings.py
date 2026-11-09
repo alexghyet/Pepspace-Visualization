@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 import numpy as np
 import pandas as pd
 import torch
@@ -6,6 +7,10 @@ from transformers import AutoTokenizer, AutoModel
 
 #paths
 BASE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BASE))
+
+from utils.dataset import parse_amp_labels
+
 CSV_PATH = BASE / "data" / "veltri" / "all_veltri.csv"
 
 OUT_DIR = BASE / "embeddings" / "veltri"
@@ -26,19 +31,16 @@ df = pd.read_csv(CSV_PATH)
 SEQ_COL = "aa_seq"   # peptide strings
 LABEL_COL = "AMP"    # 1/0 label
 
-sequences = df[SEQ_COL].astype(str).tolist()
+missing_columns = {SEQ_COL, LABEL_COL}.difference(df.columns)
+if missing_columns:
+    raise ValueError(f"Dataset is missing required columns: {', '.join(sorted(missing_columns))}.")
+sequence_values = df[SEQ_COL]
+if df.empty or sequence_values.isna().any() or sequence_values.astype(str).str.strip().eq("").any():
+    raise ValueError("Every dataset row must contain a non-empty peptide sequence.")
+sequences = sequence_values.astype(str).str.strip().tolist()
 
-# Convert AMP label to True/False
-y = df[LABEL_COL]
-if y.dtype == bool:
-    is_amp = y.astype(bool)
-elif pd.api.types.is_numeric_dtype(y):
-    is_amp = y.astype(int).eq(1)
-else:
-    # fallback if it's strings like "AMP" / "non-AMP"
-    is_amp = y.astype(str).str.strip().str.lower().isin(
-        ["1", "true", "t", "amp", "antimicrobial", "yes", "y", "pos", "positive"]
-    )
+# Reject missing or unknown classes instead of treating them as Non-AMP.
+is_amp = parse_amp_labels(df[LABEL_COL])
 
 # Load tokenizer + model
 device = "cuda" if torch.cuda.is_available() else "cpu"
