@@ -83,7 +83,8 @@ class DatasetValidationTests(unittest.TestCase):
         self.assertEqual(frame.sequence.tolist(), ["", "", ""])
         self.assertFalse(frame.attrs["amp_labels_available"])
         self.assertEqual(frame.is_amp.tolist(), [None, None, None])
-        with self.assertRaisesRegex(ValueError, "at least one column"):
+        self.assertEqual(build_plot_dataframe(pd.DataFrame(index=range(3))).id.tolist(), ["0", "1", "2"])
+        with self.assertRaisesRegex(ValueError, "at least one row"):
             build_plot_dataframe(pd.DataFrame())
         with self.assertRaisesRegex(ValueError, "does not exist"):
             build_plot_dataframe(pd.DataFrame({"value": [1]}), seq_col="missing")

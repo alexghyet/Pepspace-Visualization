@@ -11,13 +11,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from utils.embedding_runtime import get_trustworthiness, get_umap_projection
 from utils.dataset import validate_embeddings
+from utils.project_paths import EMBEDDINGS_PATH
 from utils.projection_settings import load_optuna_parameters, projection_arguments, projection_defaults
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dimensions", type=int, choices=range(3, 9), default=3)
-    parser.add_argument("--embeddings", type=Path, default=PROJECT_ROOT / "embeddings/veltri/veltri_embeddings.npy")
+    parser.add_argument("--embeddings", type=Path, default=PROJECT_ROOT / EMBEDDINGS_PATH)
     parser.add_argument(
         "--params", type=Path, default=PROJECT_ROOT / "optuna_results/3d_params.json",
         help="Optimization settings file; defaults to the app's shared 3D baseline for every display dimension.",

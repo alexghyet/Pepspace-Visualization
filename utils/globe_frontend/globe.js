@@ -80,14 +80,15 @@ function updateSelectionCount(sourceIndices) {
 function showHover(index) {
   const peptide = Number.isInteger(index) ? displayedMetadata[index] : null;
   hoveredIndex = peptide ? index : null;
-  const classLabel = peptide && peptide.is_amp === true ? "AMP (blue)"
-    : peptide && peptide.is_amp === false ? "Non-AMP (red)" : "Unlabeled (gray)";
+  const classLabel = peptide && peptide.is_amp === true ? "AMP"
+    : peptide && peptide.is_amp === false ? "Non-AMP" : "Unlabeled";
+  const mappedLabel = peptide?.display_label;
   details.textContent = peptide
-    ? `ID: ${peptide.id} · ${classLabel} · Sequence: ${peptide.sequence}`
+    ? `ID: ${peptide.id} · ${classLabel}${mappedLabel ? ` · Label: ${mappedLabel}` : ""} · ${peptide.dataset || ""} ${peptide.role || ""} · Activity: ${peptide.activity || "Unknown"} · Sequence: ${peptide.sequence}${peptide.structure_id ? ` · Structure: ${peptide.structure_id}` : ""}`
     : "Hover over a peptide to see its ID, sequence, and class.";
   hoverLabel.hidden = !peptide || payload?.show_hover_labels === false;
   if (peptide && !hoverLabel.hidden) {
-    hoverLabel.textContent = `${peptide.id} · ${classLabel}`;
+    hoverLabel.textContent = `${peptide.id} · ${mappedLabel || classLabel}`;
     positionHoverLabel();
   }
 }
@@ -140,13 +141,12 @@ function colorPoint(index, selected, hovered) {
   const peptide = displayedMetadata[index];
   // Helpers supply the stable globe frame and bounds, never class colors.
   if (!peptide) return "rgba(150,150,150,0)";
-  const alpha = Math.max(0, Math.min(1, Number(payload.opacity) || 0));
+  const alpha = Math.max(0, Math.min(1, Number(peptide.opacity ?? payload.opacity) || 0));
   const focused = selected.has(index) || hovered === index;
   const opacity = selected.size && !focused ? alpha * 0.16 : alpha;
   // Keep the same class color during hover, selection, and text rendering.
   // ScatterGL's text renderer ignores alpha, so blend text against the theme.
-  const rgb = peptide.is_amp === true ? [0, 0, 255]
-    : peptide.is_amp === false ? [255, 0, 0] : [148, 163, 184];
+  const rgb = PeptideGlobeGeometry.pointRgb(peptide);
   if (renderMode === "labels") {
     const base = new THREE.Color(background);
     const blend = [base.r, base.g, base.b].map((v, i) => Math.round(255 * v * (1 - opacity) + rgb[i] * opacity));
@@ -184,7 +184,7 @@ function makeDataset(data) {
   localBySource = new Map();
   data.points.forEach((point, index) => {
     const metadata = data.metadata[index];
-    if (!metadata || (data.selected_only && selected.size > 0 && !selected.has(metadata.row_index))) return;
+    if (!PeptideGlobeGeometry.pointVisible(metadata, data.selected_only, selected)) return;
     localBySource.set(metadata.row_index, points.length);
     displayedMetadata.push(metadata);
     points.push(point);
@@ -299,7 +299,7 @@ function render(data, theme) {
     document.documentElement.style.setProperty("--panel", theme.secondaryBackgroundColor || background);
     document.documentElement.style.setProperty("--border", theme.base === "dark" ? "#64748b" : "#94a3b8");
   }
-  const nextKey = JSON.stringify([data.revision, data.selected_only && data.selected_indices.length ? [...new Set(data.selected_indices)].sort((a, b) => a - b) : null]);
+  const nextKey = JSON.stringify([data.revision, data.metadata.map(row => row.visible !== false), data.selected_only && data.selected_indices.length ? [...new Set(data.selected_indices)].sort((a, b) => a - b) : null]);
   const newData = geometryKey !== nextKey;
   if (newData) {
     if (scatter) {
@@ -334,6 +334,9 @@ function render(data, theme) {
     globeVisible = null;
     showHover(null);
   }
+  // Color/opacity controls update metadata even when geometry is reused.
+  const metadataByRow = new Map(data.metadata.map(row => [row.row_index, row]));
+  displayedMetadata = displayedMetadata.map(row => metadataByRow.get(row.row_index));
   if (globeVisible !== Boolean(data.show_globe)) {
     // In 0.0.13 sequences must be initialized before selected indices.
     scatter.select([]);
@@ -346,7 +349,7 @@ function render(data, theme) {
   overlayRevision = "";
   showHover(hoveredIndex);
   updateSelectionCount(data.selected_indices || []);
-  graph.setAttribute("aria-label", `${data.title || "Peptide globe"}. Blue AMP, red Non-AMP, gray unlabeled.`);
+  graph.setAttribute("aria-label", `${data.title || "Peptide globe"}. Colors match the 2D legend; hover to inspect peptide metadata.`);
   errorBox.hidden = true;
   resizeFrame();
 }

@@ -6,11 +6,11 @@ import numpy as np
 import pandas as pd
 
 
-def validate_embeddings(values):
+def validate_embeddings(values, *, min_rows=3):
     """Return finite real-valued float32 embeddings without accepting text casts."""
     points = np.asarray(values)
-    if points.ndim != 2 or points.shape[0] < 3 or points.shape[1] < 2:
-        raise ValueError("Embeddings must be a 2D numeric array with at least three rows and two columns.")
+    if points.ndim != 2 or points.shape[0] < min_rows or points.shape[1] < 2:
+        raise ValueError(f"Embeddings must be a 2D numeric array with at least {min_rows} rows and two columns.")
     if points.dtype.kind not in "iuf":
         raise ValueError("Embeddings must contain real numeric values, not strings, objects, booleans, or complex numbers.")
     if not np.isfinite(points).all():
@@ -85,8 +85,8 @@ def parse_amp_labels(values):
 
 def build_plot_dataframe(meta, *, seq_col=None, id_col=None, label_col=None, amp_col=None):
     """Normalize metadata without relying on duplicate IDs or incoming indices."""
-    if not isinstance(meta, pd.DataFrame) or meta.empty or not len(meta.columns):
-        raise ValueError("Metadata must contain at least one column and one row.")
+    if not isinstance(meta, pd.DataFrame) or len(meta) == 0:
+        raise ValueError("Metadata must contain at least one row.")
     # Validate normalized column uniqueness even when callers provide overrides.
     pick_col(meta, ())
     for column in (seq_col, id_col, label_col, amp_col):
@@ -96,13 +96,30 @@ def build_plot_dataframe(meta, *, seq_col=None, id_col=None, label_col=None, amp
     source = meta.reset_index(drop=True)
     row_indices = np.arange(len(source))
     fallback_ids = pd.Series(row_indices).astype(str)
-    identifiers = source[id_col].where(source[id_col].notna(), fallback_ids).astype(str) if id_col is not None else fallback_ids
+    identifiers = fallback_ids
+    if id_col is not None:
+        supplied = source[id_col].astype("string")
+        identifiers = supplied.where(supplied.str.strip().ne("").fillna(False), fallback_ids).astype(str)
     frame = pd.DataFrame({
         "row_index": row_indices,
         "id": identifiers,
-        "label": source[label_col].fillna("unknown").astype(str) if label_col is not None else "unknown",
-        "sequence": source[seq_col].fillna("").astype(str) if seq_col is not None else "",
+        "label": source[label_col].astype("string").fillna("unknown").astype(str) if label_col is not None else "unknown",
+        "sequence": source[seq_col].astype("string").fillna("").astype(str) if seq_col is not None else "",
         "is_amp": parse_amp_labels(source[amp_col]) if amp_col is not None else None,
     })
     frame.attrs["amp_labels_available"] = amp_col is not None
     return frame
+
+
+def numeric_metadata_columns(meta):
+    """Find potential size fields while keeping uploaded text IDs in their original form."""
+    columns = []
+    for name, values in meta.items():
+        if values.dtype.kind in "iuf":
+            columns.append(name)
+        elif values.dtype.kind in "OUS":
+            present = values.dropna()
+            present = present[present.astype("string").str.strip().ne("")]
+            if len(present) and pd.to_numeric(present, errors="coerce").notna().all():
+                columns.append(name)
+    return columns

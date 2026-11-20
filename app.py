@@ -1,45 +1,21 @@
 import time
 import json
-from io import BytesIO
 from pathlib import Path
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
 from joblib import hash as joblib_hash
-from utils.dataset import build_plot_dataframe, parse_amp_labels, pick_col, validate_embeddings, validate_row_alignment
+from utils.dataset import numeric_metadata_columns
 from utils.embedding_runtime import dependency_versions, get_umap_projection, get_trustworthiness, memory
 from utils.globe_view import create_globe_scatter, parse_globe_selection, render_globe
 from utils.projection_settings import load_optuna_parameters, projection_arguments as make_projection_arguments, projection_defaults
 from utils.sphere_projection import fit_embeddings_in_sphere, project_embeddings_to_sphere
+from utils.workflow_ui import prepare_workflow
+from utils.reference_projection import get_reference_projection, fit_display, apply_display, reference_bundle
+from utils.structure_view import show_structure_inspector
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-
-
-# Default source paths; dataset-independent projection defaults live in utils.
-class CFG:
-    # Path files
-    EMB_PATH = "embeddings/veltri/veltri_embeddings.npy"
-    META_PATH = "embeddings/veltri/veltri_metadata.csv"
-    VELTRI_PATH = "data/veltri/all_veltri.csv"
-
-
-# --- Cached functions ---
-@st.cache_data(max_entries=4)
-def load_embeddings(source, revision=None):
-    file = BytesIO(source) if isinstance(source, bytes) else source
-    return validate_embeddings(np.load(file, allow_pickle=False))
-
-
-@st.cache_data(max_entries=4)
-def load_metadata(source, revision=None):
-    return pd.read_csv(BytesIO(source) if isinstance(source, bytes) else source)
-
-
-def local_source(relative_path):
-    path = PROJECT_ROOT / relative_path
-    stat = path.stat()
-    return str(path), (stat.st_mtime_ns, stat.st_size)
 
 
 @st.cache_data(max_entries=12)
@@ -55,129 +31,35 @@ st.title("PepSpace — UMAP / densMAP Peptide Embeddings")
 st.sidebar.caption("Appearance: open ⋮ → Settings → Theme to choose Light, Dark, or System.")
 
 
-# --- File uploaders ---
-st.sidebar.header("Upload Local Files")
-uploaded_embeddings = st.sidebar.file_uploader("Upload embeddings (.npy)", type=["npy"])
-uploaded_metadata   = st.sidebar.file_uploader("Upload metadata (.csv)", type=["csv"])
+workflow = prepare_workflow(PROJECT_ROOT)
+X, meta, df = workflow.X, workflow.meta, workflow.df
+emb_source, meta_source = workflow.embeddings_source, workflow.metadata_source
+dataset_revision = workflow.fingerprint
+fit_count = len(workflow.reference)
+st.caption(f"Embeddings: {emb_source} | Metadata: {meta_source}")
+if workflow.overlay:
+    st.caption("Reference points stay fixed. New points are placed with the saved UMAP model. These coordinates describe embedding similarity.")
+has_amp = df["is_amp"].notna().any()
+if not has_amp:
+    st.caption("Choose Label, Activity, or Dataset to color these points.")
 
-
-# --- Data source selection ---
-st.sidebar.header("Data Source")
-meta_choice = st.sidebar.radio(
-    "Metadata to use for labels/hover",
-    ["Veltri metadata (recommended)", "Raw Veltri CSV (all_veltri.csv)"],
-    index=0,
-)
-selected_meta_path = (
-    CFG.META_PATH
-    if meta_choice == "Veltri metadata (recommended)"
-    else CFG.VELTRI_PATH
-)
-
-
-# --- Load embeddings ---
-try:
-    if uploaded_embeddings is not None:
-        st.sidebar.success("Using uploaded embeddings")
-        X = load_embeddings(uploaded_embeddings.getvalue())
-        emb_source = "Uploaded .npy"
-    else:
-        X = load_embeddings(*local_source(CFG.EMB_PATH))
-        emb_source = CFG.EMB_PATH
-except Exception as e:
-    st.error(f"Could not read embeddings: {e}")
-    st.info(f"Default expected at: {CFG.EMB_PATH}")
-    st.stop()
-
-st.caption(f"Embeddings source: {emb_source}")
-
-# --- Load metadata ---
-try:
-    if uploaded_metadata is not None:
-        st.sidebar.success("Using uploaded metadata")
-        meta = load_metadata(uploaded_metadata.getvalue())
-        meta_source = "Uploaded .csv"
-    else:
-        meta = load_metadata(*local_source(selected_meta_path))
-        meta_source = selected_meta_path
-except Exception as e:
-    st.error(f"Could not read metadata: {e}")
-    st.stop()
-
-st.caption(f"Metadata source: {meta_source}")
-
-
-try:
-    validate_row_alignment(X, meta)
-    seq_col = pick_col(meta, ["sequence", "aa_seq", "seq", "peptide", "peptide_sequence", "amp_sequence"])
-    id_col = pick_col(meta, ["peptide_id", "id", "identifier", "name", "entry", "accession"])
-    label_col = pick_col(meta, ["source", "label", "class", "family", "dataset", "type"])
-    amp_col = pick_col(meta, ["is_amp", "AMP"])
-except ValueError as error:
-    st.error(str(error))
-    st.stop()
-
-if amp_col is None and label_col is not None:
-    try:
-        parse_amp_labels(meta[label_col])
-        amp_col = label_col
-    except ValueError:
-        pass
-
-st.sidebar.header("Column Override (if auto detection fails)")
-cols = list(meta.columns)
-
-if seq_col is None:
-    seq_choice = st.sidebar.selectbox("Select sequence column (optional)", ["None"] + cols)
-    if seq_choice != "None":
-        seq_col = seq_choice
-
-if id_col is None:
-    id_choice = st.sidebar.selectbox("Select ID column (optional)", ["None"] + cols)
-    if id_choice != "None":
-        id_col = id_choice
-
-if label_col is None:
-    label_choice = st.sidebar.selectbox("Select label column (optional)", ["None"] + cols)
-    if label_choice != "None":
-        label_col = label_choice
-
-
-amp_options = [None] + cols
-amp_col = st.sidebar.selectbox(
-    "AMP status column", amp_options, index=amp_options.index(amp_col),
-    format_func=lambda column: "Unlabeled" if column is None else str(column),
-)
-try:
-    df = build_plot_dataframe(meta, seq_col=seq_col, id_col=id_col, label_col=label_col, amp_col=amp_col)
-except ValueError as error:
-    st.error(str(error))
-    st.stop()
-df["class_label"] = df["is_amp"].map({True: "AMP", False: "Non-AMP"}).fillna("Unlabeled")
-if not df.attrs["amp_labels_available"]:
-    st.warning("No AMP status column is selected. Peptides are shown in grey as Unlabeled.")
-dataset_revision = joblib_hash((X, meta))
-
-
-# --- Projection settings: batch edits before the expensive fit ---
-if len(X) < 3:
-    st.error("At least three matching embedding and metadata rows are required.")
-    st.stop()
 
 st.sidebar.header("UMAP Settings")
 sphere_dims = st.sidebar.selectbox(
     "Sphere Dimensions (3D plot)", [3, 4, 5, 6, 7, 8],
     help="The 2D plot uses its own UMAP fit. Outputs above 3D use PCA for the globe display.",
 )
-max_neighbors = min(200, len(X) - 1)
-settings_context = (dataset_revision, max_neighbors)
+max_neighbors = min(200, fit_count - 1)
+settings_context = (joblib_hash(workflow.reference), workflow.overlay, max_neighbors)
 if st.session_state.get("settings_context") != settings_context:
     try:
         best = load_optuna_parameters(PROJECT_ROOT / "optuna_results/3d_params.json")
-        defaults = projection_defaults(len(X), best)
+        defaults = projection_defaults(fit_count, best)
     except ValueError as error:
         st.sidebar.warning(f"{error}. Using the shared default settings.")
-        defaults = projection_defaults(len(X))
+        defaults = projection_defaults(fit_count)
+    if workflow.overlay:
+        defaults["method"] = "UMAP"
     for name, value in defaults.items():
         st.session_state[f"setting_{name}"] = value
     st.session_state["applied_settings"] = defaults
@@ -194,16 +76,16 @@ with st.sidebar.form("projection_settings"):
         "min_dist", min_value=0.0, max_value=1.0, step=0.001,
         format="%.8f", key="setting_min_dist",
     )
-    method_input = st.radio("Projection Type", ["UMAP", "densMAP"], key="setting_method")
-    st.caption("The next three settings apply to densMAP.")
+    method_input = st.radio("Projection Type", ["UMAP"] if workflow.overlay else ["UMAP", "densMAP"], key="setting_method")
+    st.caption("Reference overlays use UMAP because densMAP cannot transform unseen data." if workflow.overlay else "The next three settings apply to densMAP.")
     dens_lambda_input = st.number_input(
-        "dens_lambda", min_value=0.0, step=0.01, format="%.8f", key="setting_dens_lambda",
+        "dens_lambda", min_value=0.0, step=0.01, format="%.8f", key="setting_dens_lambda", disabled=workflow.overlay,
     )
     dens_frac_input = st.number_input(
-        "dens_frac", min_value=0.0, max_value=1.0, step=0.01, key="setting_dens_frac",
+        "dens_frac", min_value=0.0, max_value=1.0, step=0.01, key="setting_dens_frac", disabled=workflow.overlay,
     )
     dens_var_shift_input = st.number_input(
-        "dens_var_shift", min_value=0.000001, step=0.01, key="setting_dens_var_shift",
+        "dens_var_shift", min_value=0.000001, step=0.01, key="setting_dens_var_shift", disabled=workflow.overlay,
     )
     if st.form_submit_button("Apply projection settings"):
         st.session_state["applied_settings"] = dict(
@@ -222,12 +104,12 @@ show_globe = st.sidebar.checkbox("Show globe frame", value=True)
 show_axes = st.sidebar.checkbox("Show axes", value=True)
 show_hover_labels = st.sidebar.checkbox("Show hover labels", value=True)
 point_size = st.sidebar.slider("Point size", 1, 10, 3)
-opacity = st.sidebar.slider("Opacity", 0.1, 1.0, 0.7, 0.05)
+opacity = 1. if workflow.overlay else st.sidebar.slider("Opacity", 0.1, 1.0, 0.7, 0.05)
 
 st.sidebar.header("Region Selection (2D)")
 select_mode = st.sidebar.radio(
     "Selection Mode", ["box", "lasso", "pan"],
-    help="Select a 2D region to show only those peptides in every globe dimension. Clear the selection to restore all points.",
+    help="Select peptides across both views. Enable Filter globe to selection to restrict the globe to selected rows.",
 )
 calculate_quality = st.sidebar.checkbox(
     "Calculate exact quality scores", value=False,
@@ -235,15 +117,52 @@ calculate_quality = st.sidebar.checkbox(
 )
 st.sidebar.caption("Unchanged projections are reused across app restarts. New settings require a full fit.")
 
-with st.spinner("Loading or fitting the 2D projection..."):
-    X_umap_2d, fit_2d, runtime_2d, cached_2d = get_umap_projection(
-        X, n_components=2, **projection_arguments,
-    )
-with st.spinner(f"Loading or fitting the {sphere_dims}D projection..."):
-    X_umap_nd, fit_nd, runtime_nd, cached_nd = get_umap_projection(
-        X, n_components=sphere_dims, **projection_arguments,
-    )
-X_sphere = display_coordinates(X_umap_nd, sphere_layout)
+st.sidebar.header("Layers and labels")
+show_reference = show_new = True
+reference_opacity, new_opacity = .2, 1.
+if workflow.overlay:
+    show_reference = st.sidebar.checkbox("Show reference data", value=True)
+    show_new = st.sidebar.checkbox("Show new data", value=True)
+    reference_opacity = st.sidebar.slider("Reference opacity", 0.05, 1.0, .2, .05)
+    new_opacity = st.sidebar.slider("New data opacity", 0.05, 1.0, 1., .05)
+    st.sidebar.caption("Visibility changes both views and keeps coordinates and selections.")
+filter_globe_selection = st.sidebar.checkbox("Filter globe to selection", value=not workflow.overlay,
+                                             key=f"filter_globe_{workflow.overlay}")
+visible_mask = np.ones(len(df), dtype=bool)
+if workflow.overlay:
+    visible_mask = np.where(df["role"].eq("Reference"), show_reference, show_new)
+if not visible_mask.any():
+    st.info("Both layers are hidden. Turn on Show reference data or Show new data to view points.")
+color_by = st.sidebar.selectbox("Color by", ["AMP status", "Label", "Activity", "Dataset"],
+                                index=1 if not has_amp and df["label"].ne("unknown").any() else 0)
+color_column = {"AMP status": "class_label", "Label": "label", "Activity": "activity", "Dataset": "dataset"}[color_by]
+if color_by == "AMP status":
+    color_map = {"AMP": "blue", "Non-AMP": "red", "Unlabeled": "#94a3b8"}
+else:
+    color_map = {value: px.colors.qualitative.Safe[index % len(px.colors.qualitative.Safe)]
+                 for index, value in enumerate(sorted(df[color_column].unique()))}
+numeric_columns = [column for column in numeric_metadata_columns(meta)
+                   if column not in ("source_row_index", "row_index", "AMP", "is_amp")]
+bubble_column = st.sidebar.selectbox("2D bubble size", [None] + numeric_columns,
+                                     format_func=lambda column: "Uniform" if column is None else column)
+
+try:
+    projection_function = get_reference_projection if workflow.overlay else get_umap_projection
+    projection_data = (workflow.reference, workflow.query) if workflow.overlay else (X,)
+    with st.spinner("Loading or fitting the 2D projection..."):
+        X_umap_2d, fit_2d, runtime_2d, cached_2d = projection_function(
+            *projection_data, n_components=2, **projection_arguments,
+        )
+    with st.spinner(f"Loading or fitting the {sphere_dims}D projection..."):
+        X_umap_nd, fit_nd, runtime_nd, cached_nd = projection_function(
+            *projection_data, n_components=sphere_dims, **projection_arguments,
+        )
+    display_transform = fit_display(X_umap_nd[:workflow.reference_count]) if workflow.overlay else None
+    X_sphere = (apply_display(X_umap_nd, display_transform, sphere_layout) if workflow.overlay
+                else display_coordinates(X_umap_nd, sphere_layout))
+except (ValueError, RuntimeError) as error:
+    st.error(f"Could not project this dataset: {error}")
+    st.stop()
 
 # Keep selections tied to source rows, independently of any display projection.
 plot_revision = joblib_hash((dataset_revision, df, projection_arguments))
@@ -268,6 +187,14 @@ export_context = {
         "embedding_dtype": str(X.dtype),
     },
     "library_versions": dict(dependency_versions()),
+    "workflow": workflow.mode,
+    "embedding_manifest": workflow.manifest,
+    "query_manifest": workflow.query_manifest,
+    "reference_count": workflow.reference_count,
+    "source_rows": df[["row_index", "dataset", "role", "source_row_index"]].to_dict(orient="records"),
+    "display_transform": {key: value.tolist() if isinstance(value, np.ndarray) else value
+                          for key, value in display_transform.items()} if display_transform else None,
+    "visible_layers": {"reference": show_reference, "new": show_new},
 }
 
 st.subheader("Projection timings")
@@ -279,6 +206,21 @@ for column, dimensions, fit_time, elapsed, cached in (
 ):
     column.metric(f"{dimensions}D {'cache load' if cached else 'fit'}", f"{elapsed:.3f}s")
     column.caption(f"Original fit: {fit_time:.2f}s | {'Saved result reused' if cached else 'Full fit saved'}")
+
+if workflow.overlay:
+    reference_rows = df.iloc[:workflow.reference_count][["dataset", "source_row_index", "id"]].to_dict(orient="records")
+    bundle_key = joblib_hash((workflow.reference, reference_rows, sphere_dims, sphere_layout, projection_arguments, workflow.manifest))
+    if st.button("Prepare fitted map download"):
+        provenance = {"reference_fingerprint": joblib_hash(workflow.reference),
+                      "embedding_manifest": workflow.manifest, "parameters": projection_arguments,
+                      "display_layout": sphere_layout, "reference_rows": reference_rows}
+        with st.spinner("Packaging the fitted UMAP models..."):
+            st.session_state["map_download"] = (bundle_key, reference_bundle(
+                workflow.reference, (2, sphere_dims), projection_arguments, provenance))
+    saved_map = st.session_state.get("map_download")
+    if saved_map and saved_map[0] == bundle_key:
+        st.download_button("Download fitted map (.joblib)", saved_map[1], "pepspace_reference.joblib")
+    st.caption("Fitted maps are saved locally and reused across restarts. The download includes both reducers, reference coordinates, provenance, and the globe transform.")
 
 st.subheader("Embedding Quality")
 if calculate_quality:
@@ -296,7 +238,7 @@ if calculate_quality:
     tc2.metric(f"Trustworthiness {sphere_dims}D", f"{trust_nd:.4f}")
     tc3.metric("Trustworthiness displayed 3D", f"{trust_display:.4f}")
     st.caption(
-        f"Exact scores on all {len(X):,} rows, k={quality_neighbors}, original-space metric: Euclidean. "
+        f"Exact descriptive scores on all {len(X):,} displayed-source rows, k={quality_neighbors}, original-space metric: Euclidean. "
         "The displayed score also measures loss introduced by PCA or surface projection. "
         "Trustworthiness measures local neighborhoods; it does not prove all structure is preserved."
     )
@@ -306,29 +248,36 @@ else:
 
 # 2D PLOT — always rendered, acts as the selection tool
 st.subheader("2D Projection — Selection Tool")
-st.caption("Select a region to show only those peptides in the globe. The same selection stays active across 3D–8D.")
+st.caption("Select peptides to inspect and export. Filter globe to selection restricts the globe to selected rows; selection stays active across 3D–8D.")
 
-plot_df = pd.DataFrame({
-    "row_index":  np.arange(len(df)),
-    "UMAP1":      X_umap_2d[:, 0],
-    "UMAP2":      X_umap_2d[:, 1],
-    "peptide_id": df["id"],
-    "sequence":   df["sequence"],
-    "is_amp":     df["is_amp"],
-    "class_label": df["class_label"],
-})
-
+plot_df = df.assign(UMAP1=X_umap_2d[:, 0], UMAP2=X_umap_2d[:, 1], peptide_id=df["id"])
+for column in meta.columns:
+    plot_df[f"metadata.{column}"] = meta[column].to_numpy()
+hover_fields = ["peptide_id", "sequence", "class_label", "activity", "dataset", "role", "source_row_index", "structure_id"]
+if color_by == "Label":
+    hover_fields.append("label")
+if bubble_column is not None:
+    hover_fields.append(f"metadata.{bubble_column}")
 fig_2d = px.scatter(
-    plot_df,
-    x="UMAP1", y="UMAP2",
-    color="class_label",
-    color_discrete_map={"AMP": "blue", "Non-AMP": "red", "Unlabeled": "#94a3b8"},
+    plot_df.loc[visible_mask], x="UMAP1", y="UMAP2", color=color_column,
+    symbol="role" if workflow.overlay else None,
+    color_discrete_map=color_map,
     category_orders={"class_label": ["AMP", "Non-AMP", "Unlabeled"]},
-    hover_data=["peptide_id", "sequence", "is_amp"],
-    custom_data=["row_index"],
-    title=f"{method} 2D projection",
+    hover_data=hover_fields,
+    custom_data=["row_index"], title=f"{method} 2D projection",
 )
-fig_2d.update_traces(marker=dict(size=4, opacity=0.6))
+marker_sizes = np.full(len(df), 6.)
+if bubble_column is not None:
+    values = pd.to_numeric(meta[bubble_column], errors="coerce").to_numpy(dtype=float)
+    valid = np.isfinite(values) & (values >= 0)
+    if valid.any():
+        largest = values[valid].max()
+        marker_sizes[valid] = 6 + 16 * np.sqrt(values[valid] / largest) if largest > 0 else 6
+        st.caption(f"2D bubble size: {bubble_column}. Missing, negative, or nonfinite values use the smallest marker.")
+for trace in fig_2d.data:
+    rows = np.array([int(item[0]) for item in trace.customdata])
+    alpha = np.where(df.iloc[rows]["role"].eq("Reference"), reference_opacity, new_opacity) if workflow.overlay else .6
+    trace.update(marker=dict(size=marker_sizes[rows], opacity=alpha))
 # Native 3D selections highlight the same source rows in the 2D view.
 active_selection = set(st.session_state.get("selected_indices", []))
 for trace in fig_2d.data:
@@ -368,7 +317,7 @@ if event_2d and hasattr(event_2d, "selection") and event_2d.selection:
 # empty chart state when selectedpoints changes its figure specification.
 indices_2d = sorted({
     int(p["customdata"][0]) for p in selected_points_2d
-    if p.get("customdata") and 0 <= int(p["customdata"][0]) < len(df)
+    if p.get("customdata") and 0 <= int(p["customdata"][0]) < len(df) and visible_mask[int(p["customdata"][0])]
 })
 selection_signature = (
     dataset_revision, st.session_state.get("selection_epoch", 0),
@@ -392,7 +341,7 @@ if st.session_state.get("last_2d_selection") != selection_signature:
 
 # Read persisted selection (survives reruns from dimension switcher etc.)
 selected_indices = st.session_state.get("selected_indices", [])
-selected_bbox    = st.session_state.get("selected_bbox", None)
+selected_bbox = st.session_state.get("selected_bbox", None)
 
 # Keep one block here so showing the summary cannot remount the globe iframe.
 with st.container():
@@ -417,9 +366,7 @@ with st.container():
                     json.dump({
                         **export_context,
                         "bbox": selected_bbox,
-                        "params": {
-                            **projection_arguments,
-                        },
+                        "params": projection_arguments,
                         "selected_ids": selected_df["id"].tolist(),
                         "selected_row_indices": selected_indices,
                         "projection_dimensions": 2,
@@ -434,22 +381,20 @@ with st.container():
                 st.rerun()
 
     elif select_mode in ["box", "lasso"]:
-        st.info("Draw a region on the 2D plot above to filter the globe to those peptides.")
+        st.info("Draw a region on the 2D plot above to select peptides.")
 
 
 
 # 3D SPHERE PLOT — always rendered, highlights whatever is selected in 2D
 st.divider()
 st.subheader(f"3D Globe — {sphere_dims}D Projection · ScatterGL")
-st.caption(
-    "Blue = AMP; red = non-AMP; grey = unlabeled. An active selection shows only the selected peptides."
-)
+st.caption("Blue = AMP; red = non-AMP; grey = unlabeled." if color_by == "AMP status" else f"Colors show {color_by.lower()}, matching the 2D legend.")
 if sphere_layout == "Inside globe":
     st.caption("Points fit inside the globe by centering and uniform scaling. In 3D, this preserves relative distances and neighbors.")
 else:
     st.warning("Surface mode projects points radially onto the sphere and changes distances and potentially neighbors.")
 if sphere_dims > 3:
-    st.caption(f"The {sphere_dims}D result is displayed using dimensionality reduction to3D. This display projection loses some information; the original result is retained.")
+    st.caption(f"The {sphere_dims}D result is displayed using PCA to 3D. This display projection loses some information; the original result is retained.")
 
 sphere_df = pd.DataFrame({
     "row_index": np.arange(len(df)),
@@ -460,6 +405,13 @@ sphere_df = pd.DataFrame({
     "sequence": df["sequence"],
     "is_amp":   df["is_amp"],
 })
+for column in ("dataset", "role", "source_row_index", "activity", "structure_id"):
+    sphere_df[column] = df[column]
+sphere_df["visible"] = visible_mask
+sphere_df["color"] = df[color_column].map(color_map)
+if color_by == "Label":
+    sphere_df["display_label"] = df["label"]
+sphere_df["point_opacity"] = np.where(df["role"].eq("Reference"), reference_opacity, new_opacity) if workflow.overlay else opacity
 sphere_df["selected"] = sphere_df.index.isin(selected_indices)
 
 globe_title = f"{method} {sphere_dims}D sphere"
@@ -468,11 +420,11 @@ if selected_indices:
 globe_revision = joblib_hash((plot_revision, sphere_dims, sphere_layout))
 selection_revision = joblib_hash((
     globe_revision, st.session_state.get("selection_epoch", 0),
-    st.session_state.get("selection_generation", 0),
+    st.session_state.get("selection_generation", 0), show_reference, show_new,
 ))
 globe_payload = create_globe_scatter(
     sphere_df, title=globe_title, point_size=point_size,
-    opacity=opacity, selected_only=True,
+    opacity=opacity, selected_only=filter_globe_selection,
     show_globe=show_globe, revision=globe_revision, selection_revision=selection_revision,
     show_axes=show_axes, show_hover_labels=show_hover_labels,
     axis_labels=[f"{method} {axis}" if sphere_dims == 3 else f"Display PC {axis}" for axis in (1, 2, 3)],
@@ -481,6 +433,7 @@ globe_event = render_globe(globe_payload)
 globe_indices = parse_globe_selection(globe_event, revision=selection_revision, row_count=len(df))
 if globe_indices is not None:
     event_key = (globe_event["revision"], globe_event["event_id"])
+    globe_indices = [index for index in globe_indices if visible_mask[index]]
     if event_key != st.session_state.get("last_globe_event"):
         st.session_state["last_globe_event"] = event_key
         if globe_indices != selected_indices:
@@ -492,7 +445,7 @@ if globe_indices is not None:
 # Show selected peptides table below the 3D plot if a selection is active
 if selected_indices:
     st.subheader(f"Selected Peptides on Sphere ({sphere_dims}D)")
-    selected_sphere = sphere_df.loc[sphere_df["selected"], ["row_index", "id", "sequence", "is_amp", "x", "y", "z"]].copy()
+    selected_sphere = sphere_df.loc[sphere_df["selected"], ["row_index", "id", "sequence", "is_amp", "activity", "dataset", "role", "source_row_index", "structure_id", "x", "y", "z"]].copy()
     st.dataframe(selected_sphere.round({"x": 4, "y": 4, "z": 4}), width="stretch")
 
     if st.button("Save 3D Sphere Coordinates"):
@@ -504,9 +457,7 @@ if selected_indices:
                 "sphere_dims": sphere_dims,
                 "point_layout": sphere_layout,
                 "n_selected":  len(selected_indices),
-                "params": {
-                    **projection_arguments,
-                },
+                "params": projection_arguments,
                 "selected_ids": df.iloc[selected_indices]["id"].tolist(),
                 "selected_row_indices": selected_indices,
                 "sphere_coords": selected_sphere[["row_index", "id", "x", "y", "z"]].to_dict(orient="records"),
@@ -517,6 +468,14 @@ if selected_indices:
             }, f_out, indent=2)
         st.success(f"Saved to {save_path}")
 
+
+projection_export = plot_df.copy()
+for axis in range(sphere_dims):
+    projection_export[f"UMAP_{sphere_dims}D_{axis + 1}"] = X_umap_nd[:, axis]
+projection_export[["display_x", "display_y", "display_z"]] = X_sphere
+st.download_button("Download all projected rows (.csv)", projection_export.to_csv(index=False),
+                   file_name="pepspace_projection.csv", mime="text/csv")
+show_structure_inspector()
 
 # --- Clear cache ---
 if st.sidebar.button("Clear Cache"):

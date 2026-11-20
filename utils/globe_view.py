@@ -21,12 +21,22 @@ def create_globe_scatter(
         identifier = str(row.id)
         is_amp = None if row.is_amp is None else bool(row.is_amp)
         class_label = "Unlabeled" if is_amp is None else "AMP" if is_amp else "Non-AMP"
+        display_label = getattr(row, "display_label", None)
         metadata.append({
             "row_index": int(row.row_index),
             "id": identifier,
             "sequence": str(row.sequence),
             "is_amp": is_amp,
-            "label": f"{identifier} | {class_label}",
+            "label": f"{identifier} | {display_label or class_label}",
+            "display_label": display_label,
+            "dataset": str(getattr(row, "dataset", "")),
+            "role": str(getattr(row, "role", "")),
+            "source_row_index": int(getattr(row, "source_row_index", row.row_index)),
+            "activity": str(getattr(row, "activity", "Unknown")),
+            "structure_id": str(getattr(row, "structure_id", "")),
+            "visible": bool(getattr(row, "visible", True)),
+            "color": getattr(row, "color", None),
+            "opacity": float(getattr(row, "point_opacity", opacity)),
         })
     return {
         "points": sphere_df[["x", "y", "z"]].to_numpy(dtype=float).tolist(),

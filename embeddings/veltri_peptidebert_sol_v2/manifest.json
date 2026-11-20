@@ -1,0 +1,44 @@
+{
+  "model": "ChakradharG/PeptideBERT",
+  "task": "sol",
+  "checkpoint": "C:\\Users\\alelo\\Pepspace-Visualization\\.cache\\peptidebert\\v2.0\\sol\\model.pt",
+  "checkpoint_sha256": "2df736759a8d693593f7b7952a802a9c0b3500c31f23b07339d96cfba4962575",
+  "config": {
+    "epochs": 50,
+    "batch_size": 20,
+    "vocab_size": 25,
+    "task": "sol",
+    "notes": null,
+    "debug": false,
+    "network": {
+      "BERT": {
+        "hidden_size": 256,
+        "hidden_layers": 8,
+        "attn_heads": 8,
+        "dropout": 0.1
+      }
+    },
+    "optim": {
+      "lr": 1e-05
+    },
+    "sch": {
+      "name": "lronplateau",
+      "factor": 0.1,
+      "patience": 6
+    },
+    "paths": {
+      "data": "data/",
+      "split": "full/"
+    }
+  },
+  "dataset_sha256": "1d7d5fb5bc059fefbdc72265b2e7552a9c36be1b228d700a2d6fc69ee629e561",
+  "pooling": "last_hidden_state masked residue mean",
+  "encoding": "PeptideBERT convert_encodings.m2; uppercase; no CLS/SEP; padding ID 0",
+  "truncation": false,
+  "shape": [
+    3556,
+    256
+  ],
+  "device": "cpu",
+  "torch_version": "2.10.0+cpu"
+}

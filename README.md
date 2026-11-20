@@ -7,7 +7,11 @@ PepSpace is an interactive Streamlit application for exploring bioactive peptide
 * Interactive 2D UMAP and densMAP projections
 * Consistent class colors in every dimension: AMP blue, non-AMP red, unlabeled grey
 * Hover inspection for peptide IDs, sequences, and labels
-* Upload custom embeddings (`.npy`) and metadata (`.csv`)
+* Upload existing embeddings as NPY, NPZ, CSV, TSV, or Parquet and optionally match metadata by row order or identifier
+* Upload peptide sequences and generate compatible PeptideBERT embeddings on CPU
+* Place new peptides in a saved Veltri UMAP map with independent reference/new layer visibility
+* Reproducible holdout demos on Veltri or uploaded data, with reference-only fitting
+* Activity/dataset coloring, optional numeric bubble sizes in 2D, and an uploaded PDB inspector
 * Metadata source switching between processed Veltri metadata and raw Veltri CSV
 * Level ScatterGL globe with rotation, scroll zoom, optional spin, and a reproducible reset view
 * Native ScatterGL point and text-label modes, hover inspection, and 3D box selection
@@ -144,11 +148,11 @@ The script uses the same cache, validation, and shared baseline settings as the 
 
 ## Data
 
-The main app expects precomputed Veltri embeddings and metadata at these paths:
+The main app loads PeptideBERT v2.0 solubility embeddings for Veltri by default (3,556 peptides, 256 dimensions). The files are:
 
 ```text
-embeddings/veltri/veltri_embeddings.npy
-embeddings/veltri/veltri_metadata.csv
+embeddings/veltri_peptidebert_sol_v2/veltri_embeddings.npy
+embeddings/veltri_peptidebert_sol_v2/veltri_metadata.csv
 ```
 
 It can also read the raw Veltri CSV from:
@@ -159,14 +163,9 @@ data/veltri/all_veltri.csv
 
 If the default embedding files are not present, restore them before using the default dataset, generate them with the scripts in `scripts/`, or upload custom files through the sidebar.
 
-Custom embeddings must be NumPy arrays:
+Custom embeddings can be a 2D `.npy` array, a matrix selected from a `.npz` archive, or a CSV, TSV, or Parquet table with one numeric column per dimension. Each row represents one point. Fitting an independent projection requires at least three rows and two dimensions containing finite real numbers. A Veltri overlay can accept a single query row.
 
-```text
-.npy
-shape: (samples, embedding_dimension)
-```
-
-Custom metadata must be a CSV with exactly the same number of rows, in the same order as the embedding array. Mismatches are rejected rather than truncated. Embeddings must contain finite real numeric values with at least three rows and two columns; object, text, complex, NaN, and infinite values are rejected before fitting. Column detection ignores case and surrounding whitespace, while ambiguous duplicate column names are rejected.
+Metadata is optional. For tables, columns outside the selected dimensions are available as metadata. You can also attach a CSV, TSV, or Parquet file. Matching by row order requires one metadata row per embedding in the same order. Matching by identifier accepts shuffled rows and different column names. Both files must contain the same unique, nonblank keys. Matching trims surrounding whitespace, respects case, and preserves leading zeros in text IDs.
 
 Sequence and ID columns are optional. Missing IDs fall back to source row numbers, and repeated IDs retain distinct row identities. Choose the **AMP status column** in the sidebar if needed. Accepted explicit status values are booleans, `1`/`0`, or `AMP`/`Non-AMP` strings, ignoring case, spaces, hyphens, and underscores. Present status columns with missing or invalid values produce an actionable error. Without a status column, peptides are explicitly unlabeled and grey rather than being classified as non-AMP.
 
@@ -184,13 +183,89 @@ peptide_id, sequence, source, AMP
 
 ## Example Workflow
 
-1. Load the default Veltri embeddings, or upload custom embeddings and metadata.
-2. Choose Veltri metadata or the raw Veltri CSV for labels and hover text.
-3. Adjust UMAP or densMAP parameters in the sidebar and click Apply projection settings.
-4. Explore the 2D projection and inspect peptides with hover text.
-5. Rotate and zoom the ScatterGL globe, switch between **Points / Labels**, and inspect peptides with hover text.
-6. Select a region with Plotly's 2D box/lasso tool. The globe automatically displays only those source rows; the selection remains active when switching between 3D–8D.
-7. Refine the selection with ScatterGL's **Select region**, export it, or clear it to restore the full globe.
+Select one of three modes in **Choose workflow**:
+
+| Mode | What it does |
+| --- | --- |
+| Explore a dataset | Fits UMAP or densMAP to Veltri or an uploaded dataset independently. Other encoders and synthetic vectors are supported here. |
+| Project onto Veltri | Fits UMAP to Veltri and transforms new data into that reference map. |
+| Holdout demo | Splits Veltri or an uploaded dataset, fits UMAP only on reference rows, and transforms the held-out rows. |
+
+In either upload workflow, choose **Peptide sequences (.csv)** or **Existing embeddings**.
+Sequences are embedded with the same official PeptideBERT v2.0 solubility weights,
+residue encoding, and masked-mean pooling as the default reference. Select the
+sequence column under **Metadata columns**, then click **Generate embeddings**.
+The local checkpoint and matching configuration must be present in
+`.cache/peptidebert/v2.0/sol/`. Inference runs on CPU and is cached. AMP labels are
+optional; the encoder does not produce AMP predictions. Download the generated
+embedding/metadata/manifest ZIP to reuse the results.
+
+Existing vectors from any model can be explored independently. Veltri overlays
+additionally require the matching embedding `manifest.json`.
+The app compares the checkpoint hash, model, task, encoder configuration, pooling,
+encoding, truncation, and feature count. If the manifest supplies an embeddings
+hash, the app checks the original NPY bytes or the selected NPY member inside
+an NPZ archive. For tables, it checks the selected matrix saved as a contiguous
+float32 NPY in file column order.
+
+The default holdout demo holds out 30 peptides with seed 42. Exact duplicate
+sequences remain together, so the actual holdout can be slightly larger. If no
+sequences are supplied, the split is by row. The reference needs at least three
+rows. The split fits UMAP and never retrains PeptideBERT; labels do not enter UMAP.
+
+**Show reference data** and **Show new data** independently control both plots,
+including hiding both. Reference points start faint and new points opaque; each
+layer has its own opacity slider. These controls never refit the map, recenter
+coordinates, or clear selected source rows. In overlay workflows the globe shows
+all visible layers by default. Enable **Filter globe to selection** to restrict it
+to selected rows. A selected row can stay selected while its layer is hidden.
+Selections and exports use dataset identity and source-row indices, even when
+peptide IDs repeat.
+
+**Color by** supports AMP status, label, activity, or dataset in both views.
+Optional `activity`, `activity_type`, and `pdb_id`/`structure_id` columns appear in
+hover details and exports. **2D bubble size** uses a numeric metadata column;
+missing, negative, or nonfinite values get the minimum size. Example CSV:
+
+```csv
+id,sequence,activity,measurement,pdb_id
+example-1,KWKLFKKIGAVLKVL,antibacterial,2.5,
+```
+
+The optional **Inspect a molecular structure (PDB)** panel shows alpha-carbon
+positions from the first model in a supplied PDB file, colored by chain. It does
+not predict structures or infer a link to an embedding point. Molecular positions
+are distinct from UMAP/globe coordinates.
+
+### Saved reference maps
+
+Reference fitting and query transformations have separate persistent caches in
+`.cache/projections/`, keyed by inputs, parameters, and library versions. Changing
+queries reuses the reference model. The original reference coordinates stay fixed;
+for the globe, PCA, centering, and scale are fitted on reference coordinates only.
+New points may lie outside the reference globe. Plot bounds include all loaded
+points so hiding a layer does not change the frame.
+
+**Prepare fitted map download** packages the 2D and selected n-dimensional UMAP
+reducers, reference coordinates, reference identities, display transformation,
+and provenance into a `.joblib` file. The app reuses its own local cached models
+automatically; it does not accept uploaded pickle/joblib files. A trusted exported
+bundle can be reused in Python with the same library versions:
+
+```python
+import joblib
+import numpy as np
+
+bundle = joblib.load("pepspace_reference.joblib")  # Only load trusted files.
+new_vectors = np.load("embeddings.npy", allow_pickle=False)
+new_2d = bundle["models"][2]["reducer"].transform(new_vectors)
+```
+
+This requires the same embedding method as the reference. densMAP does not
+support transforming unseen data, so reference overlays and holdout demos use
+standard UMAP. **Download all projected rows (.csv)** exports reference and query
+coordinates with their identities, independently of current visibility. Selection
+JSON exports also include the split, embedding provenance, and display transform.
 
 The 3D component includes vendored browser dependencies: ScatterGL 0.0.13 and Three.js 0.125.2 in `utils/globe_frontend/vendor/`, with their upstream licenses in `SCATTER_GL_LICENSE` and `THREE_LICENSE`. They are served locally; running the app requires no CDN connection or npm installation.
 
@@ -209,6 +284,12 @@ Pepspace-Visualization/
   data/veltri/                   Raw Veltri dataset
   embeddings/                    Precomputed embeddings and metadata
   scripts/                       Data preparation, embedding, and optimization scripts
+  utils/project_paths.py         Shared PeptideBERT and Veltri default paths
+  utils/peptidebert.py           Shared checkpoint loading and sequence inference
+  utils/workflow.py              Dataset identity, provenance, and holdout splits
+  utils/workflow_ui.py           Uploads and workflow controls
+  utils/reference_projection.py  Saved UMAP reducers and reference display transforms
+  utils/structure_view.py        Optional PDB alpha-carbon viewer
   utils/dataset.py               Input validation, labels, and stable source row identities
   utils/projection_settings.py   Shared reproducible app and CLI settings
   utils/embedding_runtime.py     Exact persistent projection and quality caches
@@ -222,15 +303,51 @@ Pepspace-Visualization/
 
 ## Scripts
 
+### PeptideBERT embeddings
+
+The default Veltri vectors use the official **PeptideBERT v2.0 solubility** checkpoint
+and padding-masked mean pooling. To regenerate them, use the command below.
+A repository clone does not include trained weights. Official weights are available
+in the [authors' GitHub releases](https://github.com/ChakradharG/PeptideBERT/releases/tag/v2.0).
+The v2.0 `checkpoints.tar` archive includes `sol`, `hemo`, and `nf` checkpoints
+with matching configurations. The extractor supports both the original and v2
+configuration/checkpoint layouts. On this machine the downloaded v2 files are
+under `.cache/peptidebert/v2.0/` (ignored by Git).
+
+```powershell
+.\.venv-x64\Scripts\python.exe scripts/make_peptidebert_embeddings.py --checkpoint "C:\path\to\checkpoint\model.pt"
+```
+
+For the downloaded solubility checkpoint:
+
+```powershell
+.\.venv-x64\Scripts\python.exe scripts/make_peptidebert_embeddings.py --checkpoint .cache/peptidebert/v2.0/sol/model.pt --output-dir embeddings/veltri_peptidebert_sol_v2 --device cpu --batch-size 16
+```
+
+This writes `veltri_embeddings.npy`, `veltri_metadata.csv`, and `manifest.json`
+under `embeddings/veltri_peptidebert_sol_v2/`, the same paths loaded by the app,
+projection precomputation, and optimization scripts by default. Existing outputs
+are never overwritten; choose a new `--output-dir` to regenerate. Use
+`--batch-size` to control memory use.
+
+The extractor matches this repository's custom residue vocabulary, without
+inserting CLS/SEP tokens. It uses a padding-masked mean of final encoder residue
+states, not classifier probabilities. This is an explicit embedding convention,
+not a reproduction of the paper's CLS visualization. It rejects unsupported
+residues and overlength sequences, strictly loads all encoder weights without
+downloading or substituting base ProtBERT weights, and records checkpoint and
+dataset hashes. The checkpoint task (e.g. solubility) describes its training;
+Veltri AMP labels remain metadata, not model predictions.
+
 Useful scripts in this repository:
 
 ```text
-scripts/make_veltri_embeddings.py    Generate Veltri embedding files
+scripts/make_peptidebert_embeddings.py Generate Veltri embeddings with PeptideBERT
 scripts/optimize_umap.py             Run UMAP parameter optimization
 scripts/precompute_projections.py    Prepare the app's persistent projection cache
 scripts/veltri_dataset.py            Prepare Veltri dataset inputs
-scripts/make_fake_csv.py             Create sample fake metadata
-scripts/make_real_csv.py             Create sample real metadata
+scripts/make_fake_csv.py             Create synthetic embeddings and metadata
+scripts/make_real_csv.py             Export the legacy solubility dataset to CSV
 ```
 
 ## Tests
@@ -245,6 +362,7 @@ An optional frontend geometry check uses Node's built-in assertion library:
 
 ```bash
 node tests/test_globe_geometry.cjs
+node tests/test_globe_layers.cjs
 ```
 
 Node is not needed to run the app.
@@ -261,14 +379,12 @@ The default globe display centers and uniformly scales 3D UMAP outputs. An optio
 
 ## Usage With Custom Datasets
 
-Upload your own peptide dataset from the sidebar:
+1. Choose **Explore a dataset → Upload my data → Existing embeddings** and upload your file.
+2. For a table, preview the rows and select the **Embedding columns**. Names such as `emb_1` and `dim_2` are suggested automatically. The app uses file column order. For a wide matrix, **Select columns to leave out instead** lets you choose the metadata columns. For a headerless CSV or TSV, clear the first-row checkbox. For an NPZ, choose the matrix and optionally a 1D identifier array.
+3. If you have a separate metadata file, attach it and choose how to match rows. With identifiers in both files, choose **Identifier** and select the key on each side. A plain NPY matrix uses row order. The preview follows embedding order. If a column name appears in both files, the attached column gets an `attached.` prefix.
+4. Under **Metadata columns**, choose any column for ID, label, sequence, or activity. Leave the ID unset to use zero-based row numbers. Review the point preview and click **Project dataset**.
 
-1. Upload embeddings as a `.npy` file.
-2. Upload metadata as a `.csv` file.
-3. Select sequence, ID, or label columns manually if auto-detection fails.
-4. Run UMAP or densMAP visualization.
-
-The metadata row count and order must match the embedding rows. If counts differ, the app stops with a clear error before fitting.
+To try a single-file upload, use [sample_embeddings.csv](data/examples/sample_embeddings.csv), also available from **Download example embeddings** in the sidebar. It contains 72 synthetic points with eight dimensions. Use `emb_1` through `emb_8` as the dimensions, `specimen_no` as the ID, and `cohort` as the label. Both plots use the three cohort colors. The numeric `batch_number` is available for bubble size.
 
 ## Author
 

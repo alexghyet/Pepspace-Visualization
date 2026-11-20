@@ -1,11 +1,6 @@
 {
-	"folders": [
-		{
-			"path": "."
-		},
-		{
-			"path": "../../Users/alelo/research/PeptideBERT"
-		}
-	],
-	"settings": {}
+  "folders": [
+    { "path": "." },
+    { "path": "../PeptideBERT" }
+  ]
 }

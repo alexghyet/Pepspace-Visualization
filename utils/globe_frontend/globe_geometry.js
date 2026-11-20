@@ -39,5 +39,23 @@
     return lines;
   }
 
-  return Object.freeze({cameraSettings, createGlobeLines});
+  function pointVisible(metadata, selectedOnly, selected) {
+    return Boolean(metadata && metadata.visible !== false
+      && (!selectedOnly || selected.size === 0 || selected.has(metadata.row_index)));
+  }
+
+  function pointRgb(metadata) {
+    if (metadata.color) {
+      const hex = /^#([0-9a-f]{6})$/i.exec(metadata.color);
+      if (hex) return [0, 2, 4].map(start => parseInt(hex[1].slice(start, start + 2), 16));
+      const rgb = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i.exec(metadata.color);
+      if (rgb) return rgb.slice(1).map(value => Math.max(0, Math.min(255, Number(value))));
+      if (metadata.color === "blue") return [0, 0, 255];
+      if (metadata.color === "red") return [255, 0, 0];
+    }
+    return metadata.is_amp === true ? [0, 0, 255]
+      : metadata.is_amp === false ? [255, 0, 0] : [148, 163, 184];
+  }
+
+  return Object.freeze({cameraSettings, createGlobeLines, pointVisible, pointRgb});
 });

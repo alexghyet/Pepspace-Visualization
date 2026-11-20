@@ -29,8 +29,8 @@ class LinkedViewTests(unittest.TestCase):
             "label": ["test"] * 12,
             "is_amp": [index % 2 == 0 for index in range(12)],
         })
-        self.embedding_path = self.root / "embeddings/veltri/veltri_embeddings.npy"
-        self.metadata_path = self.root / "embeddings/veltri/veltri_metadata.csv"
+        self.embedding_path = self.root / "embeddings/veltri_peptidebert_sol_v2/veltri_embeddings.npy"
+        self.metadata_path = self.root / "embeddings/veltri_peptidebert_sol_v2/veltri_metadata.csv"
         self.embedding_path.parent.mkdir(parents=True)
         self.write_dataset()
         parameter_directory = self.root / "optuna_results"
